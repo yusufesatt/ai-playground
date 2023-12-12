@@ -9,19 +9,14 @@ Created on Mon Dec 11 22:39:44 2023
 # Import libraries
 import torch
 import torch.nn as nn
-from torch.autograd import Variable
-from torch.utils.data import DataLoader, TensorDataset, Dataset # datayı pytorcha hazır hale getirmek için kullanılır 
+from torch.utils.data import DataLoader, TensorDataset, Dataset
 import pandas as pd
-from sklearn.model_selection import train_test_split
 import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
 import pandas as pd
-from torch.utils import data as D
 import os
-import glob
 from PIL import Image
-import os.path as osp
 import torchvision.transforms as transforms
 import torchvision
 from torchsummary import summary
