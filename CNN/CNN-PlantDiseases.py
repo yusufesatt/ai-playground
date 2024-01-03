@@ -122,8 +122,6 @@ class CNNModel(nn.Module):
         
     def forward(self, x):
         
-        x = x.cuda()
-        
         x = self.cnn1(x)
         x = self.relu1(x)
         x = self.mp1(x)
