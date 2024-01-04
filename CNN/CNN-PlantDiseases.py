@@ -14,17 +14,13 @@ import pandas as pd
 import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
-import pandas as pd
 import os
 from PIL import Image
 import torchvision.transforms as transforms
 import torchvision
 from torchsummary import summary
-
-# %%
-# Dataset prepare
-
-path = r"C:\Users\yusuf\Desktop\New Plant Diseases Dataset(Augmented)\train"
+import glob
+from tqdm import tqdm
 
 # %%
 
@@ -36,22 +32,22 @@ class CustomDataset(Dataset):
         self.classes = os.listdir(root_dir)
         self.class_to_idx = {cls: idx for idx, cls in enumerate(self.classes)}
         self.idx_to_class = {idx: cls for idx, cls in enumerate(self.classes)} # Matching indexes with class names
-        self.images = self.get_images()
+        self.data = self.load_data()
 
-    def get_images(self):
-        images = []
+    def load_data(self):
+        data = []
         for class_name in self.classes:
-            class_path = os.path.join(self.root_dir, class_name)
-            for img_name in os.listdir(class_path):
-                img_path = os.path.join(class_path, img_name)
-                images.append((img_path, self.class_to_idx[class_name]))
-        return images
+            class_folder = os.path.join(self.root_dir, class_name)
+            files = os.listdir(class_folder)
+            for file in files:
+                data.append((os.path.join(class_folder, file), self.classes.index(class_name)))
+        return data
 
     def __len__(self):
-        return len(self.images)
+        return len(self.data)
 
     def __getitem__(self, idx):
-        img_path, label = self.images[idx]
+        img_path, label = self.data[idx]
         img = Image.open(img_path).convert("RGB")
 
         if self.transform:
@@ -69,31 +65,32 @@ transform = transforms.Compose([
 ])
 
 # %%
-
-dataset = CustomDataset(root_dir=path, transform=transform)
-class_names = dataset.classes
+# Dataset prepare
 
 batch_size = 32
-dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
-# %%
-test_path = r"C:\Users\yusuf\Desktop\New Plant Diseases Dataset(Augmented)\valid"
+train_path = r"C:\Users\yusuf\Documents\AI\Datasets\New Plant Diseases Dataset(Augmented)\train"
+test_path = r"C:\Users\yusuf\Documents\AI\Datasets\New Plant Diseases Dataset(Augmented)\valid"
 
-train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
-
+train_dataset = CustomDataset(root_dir=train_path, transform=transform)
 test_dataset = CustomDataset(root_dir=test_path, transform=transform)
+
+train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+
+class_names = train_dataset.classes
+num_classes = len(class_names)
+print(f"Total number of classes: {num_classes}")
+print(f"Classes: {class_names}")
 
 # %%
 # Device
 
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-print("Device: ", device)
+device = "cuda" if torch.cuda.is_available() else "cpu"
+print(f"Device: {device}")
 
 # %%
 # Create CNN Model
-
-num_classes = 10
 
 class CNNModel(nn.Module):
     def __init__(self):
@@ -117,7 +114,7 @@ class CNNModel(nn.Module):
         self.flatten = nn.Flatten()
         
         # FC layers
-        self.fc = nn.Linear(64 * 61 * 61, 10) # Learn the values from maxpool on the model summary
+        self.fc = nn.Linear(64 * 61 * 61, num_classes) # Learn the values from maxpool on the model summary
         self.relu_fc = nn.ReLU()
         
     def forward(self, x):
@@ -141,88 +138,92 @@ class CNNModel(nn.Module):
         return x
     
 batch_size = 32
-num_epochs = 10
-n_iters = (len(dataset) / batch_size) * num_epochs
+num_epochs = 5
+n_iters = (len(train_dataset) / batch_size) * num_epochs
 
 # Create CNN
 model = CNNModel().to(device)
-summary(model, input_size=(3, 256, 256))
+summary(model, input_size=(3, 256, 256)) # Summary this model 
+# 3 = in_channels
+# 256, 256 input image size
 
 # Cross Entropy Loss
-criterion = nn.CrossEntropyLoss()
+loss_function = nn.CrossEntropyLoss()
 
 # SGD Optimizer
-learning_rate = 0.01
+learning_rate = 1e-3
 optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
 
-# %%  
-def calculate_metrics(model, dataloader, criterion):
-    model.eval()
-    total_loss = 0
-    correct = 0
-    total = 0
-
-    with torch.no_grad():
-        for images, labels in dataloader:
-            # Move data to the gpu
-            images = images.to(device)
-            labels = labels.to(device)
-
-            outputs = model(images)
-            loss = criterion(outputs, labels)
-            total_loss += loss.item()
-
-            _, predicted = torch.max(outputs.data, 1)
-            total += labels.size(0)
-            correct += (predicted == labels).sum().item()
-
-    accuracy = correct / total
-    average_loss = total_loss / len(dataloader)
-
-    model.train()  # Put the model back into training mode
-
-    return average_loss, accuracy
-
 # %%
-train_losses = []
-train_accuracies = []
 
-test_losses = []
-test_accuracies = []
+train_count = len(glob.glob(train_path+'/*/*'))
+test_count = len(glob.glob(test_path+'/*/*'))
+
+print(f"Total number of images in Training dataset: {train_count}, Test dataset: {test_count}")
+# %%
+
+best_accuracy = 0.0
+best_epoch = 0
 
 for epoch in range(num_epochs):
-    for i, (images, labels) in enumerate(dataloader):
-        # Convert data to tensors
+    
+    #Evaluation and training on training dataset
+    
+    model.train()
+    train_accuracy = 0.0
+    train_loss = 0.0
+    
+    for i, (images,labels) in enumerate(tqdm(train_loader, desc=f'Epoch [{epoch+1}/{num_epochs}]', unit='batch')):
         images, labels = images.to(device), labels.to(device)
-        
-        # Reset gradients
+            
         optimizer.zero_grad()
         
-        # Forward pass
         outputs = model(images)
-        
-        # Calculate Loss
-        loss = criterion(outputs, labels)
-        
-        # Backward pass
+        loss =loss_function(outputs,labels)
         loss.backward()
-        
-        # Gradient update
         optimizer.step()
-
-    #  Calculate loss and accuracy
-    train_loss, train_accuracy = calculate_metrics(model, train_loader, criterion)
-    test_loss, test_accuracy = calculate_metrics(model, test_loader, criterion)
-
-    train_losses.append(train_loss)
-    train_accuracies.append(train_accuracy)
-
-    test_losses.append(test_loss)
-    test_accuracies.append(test_accuracy)
-
-    print(f'Epoch [{epoch+1}/{num_epochs}], '
+        
+        
+        train_loss += loss.cpu().data*images.size(0)
+        _,prediction = torch.max(outputs.data,1)
+        
+        train_accuracy += int(torch.sum(prediction==labels.data))
+        
+    train_accuracy = train_accuracy / train_count
+    train_loss = train_loss / train_count
+    
+    
+    # Evaluation on testing dataset
+    model.eval()
+    
+    test_loss_total = 0.0
+    test_accuracy = 0.0
+    
+    for i, (images,labels) in enumerate(test_loader):
+        images, labels = images.to(device), labels.to(device)
+            
+        outputs = model(images)
+        loss = loss_function(outputs, labels)
+        _,prediction = torch.max(outputs.data,1)
+        test_accuracy += int(torch.sum(prediction==labels.data))
+        test_loss_total += loss.item()
+        
+    test_accuracy = test_accuracy / test_count
+    test_loss = test_loss_total / len(test_loader)
+    
+    print(
           f'Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.2%}, '
           f'Test Loss: {test_loss:.4f}, Test Accuracy: {test_accuracy:.2%}')
+    
+    #Save the best model
+    if test_accuracy > best_accuracy:
+        torch.save(model.state_dict(),'best_checkpoint.model')
+        best_accuracy = test_accuracy
+        best_epoch = epoch
+    else:
+        pass
+
+print(f"Training operation completed. The model with {best_accuracy:.2%} value was recorded and {best_epoch+1}")
         
 # %%
 
